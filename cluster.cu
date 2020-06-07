@@ -87,7 +87,8 @@ int cluster(int      numObjects,      /* number of input objects */
     int    *membership;
     float **tmp_cluster_centres;
 
-    membership = (int*) malloc(numObjects * sizeof(int));
+    cudaMallocManaged(&membership, numObjects * sizeof(int));
+    // membership = (int*) malloc(numObjects * sizeof(int));
 
     nclusters=num_nclusters;
 
@@ -107,7 +108,7 @@ int cluster(int      numObjects,      /* number of input objects */
 	*cluster_centres = tmp_cluster_centres;
 
    
-    free(membership);
+    cudaFree(membership);
 
     return 0;
 }

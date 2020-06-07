@@ -1,7 +1,7 @@
 # C compiler
 HOST_CC = nvcc
 HOST_CC_FLAGS = -g -O2
- 
+
 GEM5_CC = aarch64-linux-gcc
 GEM5_CC_FLAGS = -g -O2 -static 
  
