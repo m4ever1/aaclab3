@@ -48,8 +48,18 @@ int     cluster(int, int, float**, int, float, float***);
 
 /* kmeans_clustering.c */
 float **kmeans_clustering(float**, int, int, int, float, int*);
-__device__ void   euclid_dist_2        (float*, float*, int, float*);
+__device__ float   euclid_dist_2        (float*, float*, int);
 __global__ void dowhileloop(float **, int, int, int, float, int*, int*, float);
-__device__ void   find_nearest_point   (float* , int, float**, int, float*);
+__device__ int   find_nearest_point   (float* , int, float**, int);
+    typedef void (*fun_ptr)(float **, 
+        float **,
+        int     ,
+        int     ,
+        int     ,
+        float   ,
+        int*    ,
+        int* ,
+        float** ,
+        float*);
 
 #endif

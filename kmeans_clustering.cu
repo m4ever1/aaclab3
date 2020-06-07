@@ -134,85 +134,78 @@ __global__ void dowhileloop(float **feature,
                             float* delta)
 {
     // printf("bruh\n");
-    unsigned int i = blockIdx.x, j, k;
-    extern __shared__ int ind[1];
-    // int* ind = (int*) malloc(sizeof(int));
-    j = threadIdx.x;
-    k = threadIdx.y;
-    extern __shared__ float dists_device[5];    
-    /* find the ind of nestest cluster centers */
-    //min_dist=FLT_MAX;
+    int i = (blockIdx.x *blockDim.x + threadIdx.x), j, k;
+    if(i < npoints)
+    {    
+        int index;
+        index = find_nearest_point(feature[i], nfeatures, clusters, nclusters);
+        // printf("ID = %d, index = %d\n", i, index);
+        __syncthreads();
+        // *ind = (int) dists_device[0];
+        // printf("point = %d, cluster = %d , feature = %d, ind = %d\n",i , k, j, ind);
+        // cudaMemcpy(dists_host, dists_device, sizeof(float)*nclusters, cudaMemcpyDeviceToHost);
+        // if(j == 0 && k == 0) 
+        //     printf("POINT = %d, ind = %d\n", i,*ind);
 
-    // extern __device__ float delta;
+        // printf("point = %d, cluster = %d , feature = %d, ind = %d\n",i , k, j, ind);
+        /* if membership changes, increase delta by 1 */
+        if (membership[i] != index)
+        {
+            atomicAdd(delta, 1.0);
+            
+        }
+        /* assign the membership to object i */
+        membership[i] = index;
+        // printf("new_centers[ind][j] = %f\n", new_centers[ind][j]);
+        /* update new cluster centers : sum of objects located within */
+        atomicAdd(&(new_centers_len[index]),1);
 
-    find_nearest_point(feature[i], nfeatures, clusters, nclusters, dists_device);
-    __syncthreads();
-    reduce(dists_device, ind);
-    // ;
-    
-    __syncthreads();
-    // *ind = (int) dists_device[0];
-    // printf("point = %d, cluster = %d , feature = %d, ind = %d\n",i , k, j, ind);
-    // cudaMemcpy(dists_host, dists_device, sizeof(float)*nclusters, cudaMemcpyDeviceToHost);
-    // if(j == 0 && k == 0) 
-    //     printf("POINT = %d, ind = %d\n", i,*ind);
-
-    // printf("point = %d, cluster = %d , feature = %d, ind = %d\n",i , k, j, ind);
-    /* if membership changes, increase delta by 1 */
-    if (membership[i] != *ind)
-    {
-        atomicAdd(delta, 1.0);
+        // __syncthreads();
+        
+        for (j=0; j<nfeatures; j++)      
+            atomicAdd(&(new_centers[index][j]),feature[i][j]);
+        // 
         
     }
-    /* assign the membership to object i */
-    membership[i] = *ind;
-    // printf("new_centers[ind][j] = %f\n", new_centers[ind][j]);
-    /* update new cluster centers : sum of objects located within */
-    new_centers_len[*ind]++;
-
-    // __syncthreads();
-    
-    atomicAdd(&(new_centers[*ind][j]), feature[i][j]);
-    // 
-
     __syncthreads();
-    printf("delta inside = %f\n", *delta);
 }
 
-__device__ void find_nearest_point(float  *pt,          /* [nfeatures] */
+__device__ int find_nearest_point(float  *pt,          /* [nfeatures] */
                        int     nfeatures,
                        float **pts,         /* [npts][nfeatures] */ 
-                       int     npts,
-                       float*    dists)
+                       int     npts)
 {
 
     float min_dist=FLT_MAX;
-    float* dist;
-    int i = threadIdx.y;
+    int i;
+    int index;
     // if (i<npts) {
-    dists[i] = 0;
     __syncthreads();
-    euclid_dist_2(pt, pts[i], nfeatures, &(dists[i]));  /* no need square root */
+    for (i=0; i<npts; i++) {
+        float dist;
+        dist = euclid_dist_2(pt, pts[i], nfeatures);  /* no need square root */
+        // printf("blockid = %d | threadId = %d | ans = %f\n", blockIdx.x, threadIdx.x, dist);
+        if (dist < min_dist) {
+            min_dist = dist;
+            index    = i;
+        }
+    }
     __syncthreads();
-    if(blockIdx.x == 0 && threadIdx.x == 0)
-        printf("point = %d, cluster = %d | dist = %f\n", blockIdx.x,i, dists[i]);
-    // }
+    return(index);
 }
 
 /*----< euclid_dist_2() >----------------------------------------------------*/
 /* multi-dimensional spatial Euclid distance square */
-__device__ void euclid_dist_2(float *pt1,
+__device__ float euclid_dist_2(float *pt1,
                     float *pt2,
-                    int    numdims, float* dist)
+                    int    numdims)
 {
-    int i = threadIdx.x;
     float ans=0.0;
-    // printf("i = %f\n", dist);
+    int i;
 
-    atomicAdd(dist, (pt1[i]-pt2[i]) * (pt1[i]-pt2[i]));
-    // *dist += (pt1[i]-pt2[i]) * (pt1[i]-pt2[i]);
-        // float ans += (pt1[i]-pt2[i]) * (pt1[i]-pt2[i]);
-    // *dist = ans;
+    for (i=0; i<numdims; i++){
+        ans += (pt1[i]-pt2[i]) * (pt1[i]-pt2[i]);}
+    return(ans);
 
 }
 
@@ -291,12 +284,23 @@ float** kmeans_clustering(float **feature,    /* in: [npoints][nfeatures] */
     // float *delta_host, *delta_device;
     cudaMallocManaged(&delta, sizeof(float));
 
-    // cudaMalloc(&delta_device, sizeof(float));
-    // delta_host = (float*) malloc(sizeof(float));
+    int blockSize;   // The launch configurator returned block size 
+    int minGridSize; // The minimum grid size needed to achieve the 
+                     // maximum occupancy for a full device launch 
+    int gridSize;    // The actual grid size needed, based on input size 
+    int arrayCount = npoints;
+
+    fun_ptr ptr = dowhileloop; // compile error
+    cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, ptr, 0, 0); 
+    // Round up according to array size 
+    gridSize = (arrayCount + blockSize - 1) / blockSize; 
+    printf("NPOINTS = %d | gridSize = %d, blockSize = %d\n", npoints, gridSize, blockSize);
+
     do{
         *delta = 0.0;
-        dowhileloop<<<npoints, threads>>>(feature, clusters, nfeatures, npoints, nclusters, threshold, membership, new_centers_len, new_centers_device, delta);
+        dowhileloop<<<gridSize, blockSize>>>(feature, clusters, nfeatures, npoints, nclusters, threshold, membership, new_centers_len, new_centers_device, delta);
         cudaDeviceSynchronize();
+        // exit(1);
         for (i=0; i<nclusters; i++) {
             for (j=0; j<nfeatures; j++) {
                 if (new_centers_len[i] > 0)
@@ -305,7 +309,7 @@ float** kmeans_clustering(float **feature,    /* in: [npoints][nfeatures] */
 			}
 			new_centers_len[i] = 0;   /* set back to 0 */
         }
-        printf("delta = %f\n", *delta);
+        // printf("delta = %f\n", *delta);
     } while(*delta>threshold);
 
     // cudaMemcpy(delta_host, delta_device, sizeof(float), cudaMemcpyDeviceToHost);
